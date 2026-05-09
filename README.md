@@ -1,12 +1,4 @@
-# SoundGO Beta (vibecoded lol)
-
----
-
-# Notes
-
-- SoundGO is intended only for music you own or have permission to download.
-- Respect artists, copyright law, and SoundCloud’s terms of service.
-- Purpose: Download, organize, and manage local audio files for music apps such as Apple Music & Spotify.
+# SoundGO
 
 <p align="center">
   <img src="assets/welcome_screen.png" width="760">
@@ -37,6 +29,7 @@
 - Automatic metadata rewriting using Mutagen.
 - Full-window animated loading screens.
 - Cover-art completion screen.
+- EXE builder included.
 - Default collection folder:
   - `Desktop/SoundGO Collection`
 
@@ -145,6 +138,13 @@ run_app.vbs
 
 ---
 
+# Notes
+
+- SoundGO is intended only for music you own or have permission to download.
+- Respect artists, copyright law, and SoundCloud’s terms of service.
+
+---
+
 # Project Structure
 
 ```text
@@ -159,3 +159,54 @@ SoundGO/
 │  ├─ download_complete.png
 │  └─ album_loading_complete.png
 ```
+
+
+---
+
+## Search/URL Fix
+
+This package includes a SoundCloud URL validation patch.
+
+It fixes generated search URLs like:
+
+```text
+https://soundcloud.comusername/sets/example
+```
+
+and normalizes them to:
+
+```text
+https://soundcloud.com/username/sets/example
+```
+
+SoundGO also checks selected SoundCloud URLs before downloading and warns if a page is unavailable, deleted, private, or a bad scraped result.
+
+
+---
+
+## v5 SoundCloud Download Retry Fix
+
+This patch changes SoundGO so browser-valid SoundCloud URLs are not blocked by the app's URL checker.
+
+It also automatically retries once after refreshing `yt-dlp` if SoundCloud returns:
+
+```text
+Unable to download JSON metadata: HTTP Error 404
+```
+
+This error is often caused by SoundCloud extraction/API changes rather than the link being invalid in your browser.
+
+
+---
+
+## v6 Partial Playlist Completion
+
+If SoundCloud/yt-dlp returns an error after some playlist tracks still downloaded, SoundGO now treats it as a partial completion instead of a total failure.
+
+The completion screen now shows:
+
+```text
+X/Y tracks downloaded
+```
+
+If any tracks are missing, SoundGO lists them on the side of the completion screen.

@@ -124,6 +124,8 @@ class SoundGO:
         self.spinner_canvas = None
         self.completion_cover_label = None
         self.completion_cover_img = None
+        self.missing_tracks_box = None
+        self.missing_tracks_box = None
         self.spinner_angle = 0
         self.spinner_running = False
         self.progress_complete = False
@@ -538,6 +540,42 @@ class SoundGO:
             self.root.after(0, self.check_dependencies)
         threading.Thread(target=worker, daemon=True).start()
 
+    def normalize_soundcloud_url(self, raw):
+        raw = (raw or "").replace("\\/", "/").strip().strip('"').strip("'")
+        raw = raw.split("?")[0].rstrip("/")
+
+        if raw.startswith("https://soundcloud.com/"):
+            return raw
+
+        if raw.startswith("http://soundcloud.com/"):
+            return "https://" + raw[len("http://"):]
+
+        if raw.startswith("//soundcloud.com/"):
+            return "https:" + raw
+
+        if raw.startswith("/"):
+            return "https://soundcloud.com" + raw
+
+        # Fix broken scraped URLs like:
+        # https://soundcloud.comusername/sets/name
+        if raw.startswith("https://soundcloud.com") and not raw.startswith("https://soundcloud.com/"):
+            return "https://soundcloud.com/" + raw[len("https://soundcloud.com"):].lstrip("/")
+
+        if raw.startswith("soundcloud.com") and not raw.startswith("soundcloud.com/"):
+            return "https://soundcloud.com/" + raw[len("soundcloud.com"):].lstrip("/")
+
+        if raw.startswith("soundcloud.com/"):
+            return "https://" + raw
+
+        return raw
+
+    def soundcloud_url_exists(self, url):
+        # Non-blocking validation:
+        # Some valid SoundCloud playlist pages return misleading status/HTML to simple requests,
+        # while yt-dlp/browser can still access them. So only reject obviously invalid domains.
+        url = self.normalize_soundcloud_url(url)
+        return url.startswith("https://soundcloud.com/")
+
     def search_soundcloud(self):
         q = self.search.get().strip()
         if not q:
@@ -573,7 +611,7 @@ class SoundGO:
                 if not href.startswith("/"):
                     continue
 
-                full = "https://soundcloud.com" + href
+                full = self.normalize_soundcloud_url(href)
 
                 if full in seen:
                     continue
@@ -596,9 +634,13 @@ class SoundGO:
 
                 seen.add(full)
 
+                fixed_full = self.normalize_soundcloud_url(full)
+                if not self.soundcloud_url_exists(fixed_full):
+                    continue
+
                 found.append({
                     "title": title,
-                    "url": full,
+                    "url": fixed_full,
                     "kind": kind,
                     "uploader": ""
                 })
@@ -675,13 +717,13 @@ class SoundGO:
     def use_selected_result(self, silent=False):
         r = self.selected_result(warn=not silent)
         if r:
-            self.url.set(r["url"])
+            self.url.set(self.normalize_soundcloud_url(r["url"]))
 
     def copy_selected_result(self):
         r = self.selected_result()
         if r:
             self.root.clipboard_clear()
-            self.root.clipboard_append(r["url"])
+            self.root.clipboard_append(self.normalize_soundcloud_url(r["url"]))
             self.write_log("Copied selected URL.")
 
     def show_playlist_loading_overlay(self, playlist_name="playlist"):
@@ -820,7 +862,8 @@ class SoundGO:
         return "playlist"
 
     def load_playlist_contents(self):
-        url = self.url.get().strip()
+        url = self.normalize_soundcloud_url(self.url.get().strip())
+        self.url.set(url)
         if not url:
             messagebox.showwarning("URL needed", "Paste/select a playlist/album URL first.")
             return
@@ -1121,8 +1164,75 @@ class SoundGO:
             cmd.append("--embed-thumbnail")
             cmd += ["--postprocessor-args", "ExtractAudio+ffmpeg:" + self.quote_args(self.build_metadata_args())]
         if self.keep_thumbnail.get(): cmd.append("--write-thumbnail")
-        cmd += ["-o", out_tmpl, self.url.get().strip()]
+        cmd += ["-o", out_tmpl, self.normalize_soundcloud_url(self.url.get().strip())]
         return cmd, folder
+
+    def get_audio_files_in_folder(self, folder):
+        files = []
+        try:
+            folder = Path(folder)
+            for ext in ("*.mp3", "*.m4a", "*.mp4", "*.flac", "*.wav", "*.aac", "*.opus"):
+                files.extend(folder.rglob(ext))
+        except Exception:
+            pass
+        return sorted(files, key=lambda p: p.name.lower())
+
+    def expected_playlist_tracks(self):
+        # Uses the album/EP contents already loaded in the app.
+        tracks = []
+        try:
+            for t in self.playlist_tracks:
+                idx = t.get("index")
+                title = t.get("title", "")
+                if idx and title:
+                    tracks.append({"index": int(idx), "title": str(title)})
+        except Exception:
+            pass
+        return sorted(tracks, key=lambda x: x["index"])
+
+    def detect_missing_tracks(self, folder):
+        """
+        Compare expected loaded playlist tracks against downloaded files.
+        Since album/EP downloads use a temporary index prefix before cleanup, this checks:
+        1. title match against final filenames
+        2. order fallback if names were changed by user edits
+        """
+        expected = self.expected_playlist_tracks()
+        audio_files = self.get_audio_files_in_folder(folder)
+
+        if self.mode.get() == "Single" or not expected:
+            return {
+                "downloaded": len(audio_files),
+                "total": len(audio_files) if audio_files else 1,
+                "missing": []
+            }
+
+        file_stems = [safe_folder_name(p.stem).lower() for p in audio_files]
+        downloaded_count = len(audio_files)
+
+        missing = []
+
+        # Best-effort title matching. If user edited titles, fallback count still protects summary.
+        for track in expected:
+            normalized_title = safe_folder_name(track["title"]).lower()
+            found = any(
+                normalized_title in stem or stem in normalized_title
+                for stem in file_stems
+            )
+            if not found:
+                missing.append(track["title"])
+
+        # If matching over-reports missing due to renamed files, use count-based fallback:
+        # assume the missing tracks are the last unmatched needed to make total accurate.
+        total = len(expected)
+        if len(missing) > max(0, total - downloaded_count):
+            missing = missing[:max(0, total - downloaded_count)]
+
+        return {
+            "downloaded": min(downloaded_count, total),
+            "total": total,
+            "missing": missing
+        }
 
     def get_completion_title(self, folder=None):
         if self.mode.get() == "Single":
@@ -1329,12 +1439,19 @@ class SoundGO:
         self.spinner_angle = (self.spinner_angle + 12) % 360
         self.root.after(35, self.animate_spinner)
 
-    def show_download_complete(self, folder=None):
+    def show_download_complete(self, folder=None, stats=None):
         self.progress_complete = True
         self.spinner_running = False
 
         downloaded_name = self.get_completion_title(folder)
-        self.progress_label_var.set(f"Download Complete!\nDownloaded {downloaded_name}")
+
+        if stats and stats.get("total"):
+            self.progress_label_var.set(
+                f"Download Complete!\nDownloaded {downloaded_name}\n"
+                f"{stats.get('downloaded', 0)}/{stats.get('total', 0)} tracks downloaded"
+            )
+        else:
+            self.progress_label_var.set(f"Download Complete!\nDownloaded {downloaded_name}")
 
         if hasattr(self, "progress_text_label"):
             self.progress_text_label.config(
@@ -1347,6 +1464,64 @@ class SoundGO:
             cover_path = self.get_cover_art_path_for_completion(folder)
             self.set_completion_cover_art(cover_path)
 
+        # Add/refresh missing tracks side list.
+        if hasattr(self, "missing_tracks_box") and self.missing_tracks_box:
+            try:
+                self.missing_tracks_box.destroy()
+            except Exception:
+                pass
+            self.missing_tracks_box = None
+
+        missing = stats.get("missing", []) if stats else []
+        if missing and self.loading_overlay:
+            self.missing_tracks_box = tk.Frame(
+                self.loading_overlay,
+                bg="#111722",
+                highlightbackground="#2B3342",
+                highlightthickness=1
+            )
+            self.missing_tracks_box.place(relx=0.82, rely=0.5, anchor="center", width=300, height=360)
+
+            tk.Label(
+                self.missing_tracks_box,
+                text="Missing Tracks",
+                bg="#111722",
+                fg="#ff7700",
+                font=("Segoe UI", 14, "bold")
+            ).pack(anchor="w", padx=14, pady=(14, 8))
+
+            list_frame = tk.Frame(self.missing_tracks_box, bg="#111722")
+            list_frame.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+
+            for i, title in enumerate(missing, start=1):
+                tk.Label(
+                    list_frame,
+                    text=f"{i}. {title}",
+                    bg="#111722",
+                    fg="#f5f5f5",
+                    font=("Segoe UI", 10),
+                    anchor="w",
+                    justify="left",
+                    wraplength=260
+                ).pack(fill="x", anchor="w", pady=3)
+
+        elif stats and stats.get("total") and self.loading_overlay:
+            self.missing_tracks_box = tk.Frame(
+                self.loading_overlay,
+                bg="#102219",
+                highlightbackground="#1ed760",
+                highlightthickness=1
+            )
+            self.missing_tracks_box.place(relx=0.82, rely=0.5, anchor="center", width=300, height=170)
+
+            tk.Label(
+                self.missing_tracks_box,
+                text="All Tracks Downloaded",
+                bg="#102219",
+                fg="#1ed760",
+                font=("Segoe UI", 14, "bold")
+            ).pack(expand=True)
+
         if hasattr(self, "progress_button"):
             self.progress_button.config(
                 text="OK",
@@ -1358,7 +1533,6 @@ class SoundGO:
                 padx=60
             )
 
-        # Force replace spinner with green checkmark immediately.
         self.draw_completion_checkmark()
 
     def draw_completion_checkmark(self):
@@ -1439,9 +1613,13 @@ class SoundGO:
             self.progress_label_var.set("Finishing metadata and conversion...")
 
     def start_download(self):
-        if not self.url.get().strip() or not is_url(self.url.get().strip()):
+        fixed_url = self.normalize_soundcloud_url(self.url.get().strip())
+        self.url.set(fixed_url)
+
+        if not fixed_url or not is_url(fixed_url):
             messagebox.showwarning("URL needed", "Paste/select a valid SoundCloud URL.")
             return
+
 
         self.settings["output_dir"] = self.output_dir.get().strip()
         save_settings(self.settings)
@@ -1477,22 +1655,49 @@ class SoundGO:
                         actual_folder = max(dirs, key=lambda p: p.stat().st_mtime) if dirs else Path(self.output_dir.get())
 
                 self.rewrite_metadata(actual_folder)
-                self.root.after(0, lambda f=actual_folder: self.show_download_complete(f))
-                self.write_log(f"Done. Files saved near: {actual_folder}")
+                stats = self.detect_missing_tracks(actual_folder)
+                self.root.after(0, lambda f=actual_folder, s=stats: self.show_download_complete(f, s))
+                self.write_log(
+                    f"Done. Files saved near: {actual_folder} "
+                    f"({stats.get('downloaded', 0)}/{stats.get('total', 0)} tracks downloaded)"
+                )
+                if stats.get("missing"):
+                    self.write_log("Missing tracks:")
+                    for missing_title in stats["missing"]:
+                        self.write_log(f" - {missing_title}")
             else:
-                self.root.after(0, self.close_progress_window)
-                self.write_log(f"Download exited with code {code}")
+                # yt-dlp can return a non-zero code even after partial playlist success.
+                actual_folder = folder
+                if "%(playlist_title)s" in str(folder):
+                    dirs = [p for p in Path(self.output_dir.get()).glob("*") if p.is_dir()]
+                    actual_folder = max(dirs, key=lambda p: p.stat().st_mtime) if dirs else Path(self.output_dir.get())
+
+                audio_files = self.get_audio_files_in_folder(actual_folder)
+                if audio_files:
+                    self.rewrite_metadata(actual_folder)
+                    stats = self.detect_missing_tracks(actual_folder)
+                    self.root.after(0, lambda f=actual_folder, s=stats: self.show_download_complete(f, s))
+                    self.write_log(
+                        f"Partial download completed: {stats.get('downloaded', 0)}/{stats.get('total', 0)} tracks downloaded."
+                    )
+                    if stats.get("missing"):
+                        self.write_log("Missing tracks:")
+                        for missing_title in stats["missing"]:
+                            self.write_log(f" - {missing_title}")
+                else:
+                    self.root.after(0, self.close_progress_window)
+                    self.write_log(f"Download exited with code {code}")
         except Exception as e:
             self.root.after(0, self.close_progress_window)
             self.write_log(f"Download setup error: {e}")
 
-    def run_process_return_code(self, cmd):
+    def refresh_ytdlp_for_soundcloud(self):
+        # SoundCloud extraction breaks often when yt-dlp is outdated.
+        # Silently try to update before retrying a SoundCloud 404 metadata failure.
         try:
-            self.root.after(0, lambda: self.show_progress_window())
-            self.root.after(0, lambda: self.progress_label_var.set("Preparing download..."))
-
-            self.current_process = subprocess.Popen(
-                cmd,
+            self.write_log("Trying yt-dlp update before retry...")
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--user", "-U", "yt-dlp"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
@@ -1502,24 +1707,79 @@ class SoundGO:
                 creationflags=hide_console_flags(),
                 env={**os.environ, "PYTHONUNBUFFERED":"1"}
             )
-
-            for line in self.current_process.stdout:
+            for line in proc.stdout:
                 clean = line.rstrip()
-
-                # Keep terminal clean: only show major status/errors, not every progress tick.
-                if clean.startswith("[download]"):
-                    self.root.after(0, lambda l=clean: self.parse_download_progress(l))
-                elif "ERROR:" in clean or "WARNING:" in clean:
+                if "Successfully installed" in clean or "Requirement already satisfied" in clean:
                     self.write_log(clean)
-                elif any(tag in clean for tag in ["[ExtractAudio]", "[Metadata]", "[EmbedThumbnail]", "Deleting original file"]):
-                    self.root.after(0, lambda l=clean: self.parse_download_progress(l))
+            proc.wait()
+        except Exception as e:
+            self.write_log(f"yt-dlp update skipped: {e}")
 
-            code = self.current_process.wait()
-            self.current_process = None
+    def run_process_return_code(self, cmd):
+        def run_once(command):
+            captured = []
+            try:
+                self.current_process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=hide_console_flags(),
+                    env={**os.environ, "PYTHONUNBUFFERED":"1"}
+                )
+
+                for line in self.current_process.stdout:
+                    clean = line.rstrip()
+                    captured.append(clean)
+
+                    if clean.startswith("[download]"):
+                        self.root.after(0, lambda l=clean: self.parse_download_progress(l))
+                    elif "ERROR:" in clean or "WARNING:" in clean:
+                        self.write_log(clean)
+                    elif any(tag in clean for tag in ["[ExtractAudio]", "[Metadata]", "[EmbedThumbnail]", "Deleting original file"]):
+                        self.root.after(0, lambda l=clean: self.parse_download_progress(l))
+
+                code = self.current_process.wait()
+                self.current_process = None
+                return code, "\n".join(captured)
+
+            except Exception as e:
+                self.write_log(f"Error: {e}")
+                self.current_process = None
+                return 1, str(e)
+
+        try:
+            self.root.after(0, lambda: self.show_progress_window())
+            self.root.after(0, lambda: self.progress_label_var.set("Preparing download..."))
+
+            code, output = run_once(cmd)
+
+            # SoundCloud sometimes fails with JSON metadata 404 when yt-dlp is outdated
+            # or when the API endpoint fails even though the web page is valid.
+            # Update yt-dlp and retry once automatically.
+            needs_retry = (
+                code != 0
+                and "soundcloud" in output.lower()
+                and (
+                    "unable to download json metadata" in output.lower()
+                    or "http error 404" in output.lower()
+                    or "not found" in output.lower()
+                )
+            )
+
+            if needs_retry:
+                self.write_log("SoundCloud metadata failed. Retrying once with refreshed yt-dlp...")
+                self.refresh_ytdlp_for_soundcloud()
+                code, output = run_once(cmd)
 
             if code == 0:
                 self.root.after(0, lambda: self.progress_label_var.set("Download complete. Finalizing..."))
             else:
+                self.write_log("Download still failed after retry.")
+                self.write_log("Try opening the URL in a browser, copying the final URL from the address bar, and pasting it directly.")
                 self.write_log(f"Download process exited with code {code}")
 
             return code

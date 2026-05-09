@@ -36,7 +36,6 @@
 - Automatic metadata rewriting using Mutagen.
 - Full-window animated loading screens.
 - Cover-art completion screen.
-- EXE builder included.
 - Default collection folder:
   - `Desktop/SoundGO Collection`
 

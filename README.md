@@ -1,4 +1,4 @@
-# SoundGO (vibecoded lol)
+# SoundGO Beta (vibecoded lol)
 
 ---
 

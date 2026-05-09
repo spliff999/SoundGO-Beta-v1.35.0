@@ -6,6 +6,7 @@
 
 - SoundGO is intended only for music you own or have permission to download.
 - Respect artists, copyright law, and SoundCloud’s terms of service.
+- Purpose: Download, organize, and manage local audio files for music apps such as Apple Music & Spotify.
 
 <p align="center">
   <img src="assets/welcome_screen.png" width="760">

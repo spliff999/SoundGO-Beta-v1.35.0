@@ -1,4 +1,4 @@
-# SoundGO
+# SoundGO (vibecoded lol)
 
 <p align="center">
   <img src="assets/welcome_screen.png" width="760">

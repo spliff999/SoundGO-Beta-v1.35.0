@@ -72,7 +72,7 @@ Completion screen with:
 - cover art preview
 - OK button
 
-![Download Complete](assets/download_complete.png)
+![Download Complete](assets/download_complete1.png)
 
 ---
 

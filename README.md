@@ -122,6 +122,123 @@ Restart your terminal or restart SoundGO afterward.
 
 ---
 
+# macOS Installation
+
+## Requirements
+
+- macOS 12+
+- Python 3.10+
+- Homebrew recommended
+
+---
+
+## 1. Install Homebrew (if not installed)
+
+Open Terminal and run:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+---
+
+## 2. Install FFmpeg
+
+```bash
+brew install ffmpeg
+```
+
+Verify installation:
+
+```bash
+ffmpeg -version
+ffprobe -version
+```
+
+---
+
+## 3. Install Python Dependencies
+
+Navigate to the SoundGO folder:
+
+```bash
+cd SoundGO
+```
+
+Install dependencies:
+
+```bash
+pip3 install -r requirements.txt
+```
+
+---
+
+## 4. Run SoundGO
+
+```bash
+python3 app.py
+```
+
+---
+
+# macOS EXE Equivalent (.app)
+
+macOS does not use `.exe` files.
+
+To create a standalone macOS app:
+
+```bash
+pip3 install pyinstaller
+```
+
+Then run:
+
+```bash
+pyinstaller --windowed --onefile app.py
+```
+
+The macOS app will appear in:
+
+```text
+dist/
+```
+
+---
+
+# Notes for macOS Users
+
+- Downloads save to:
+  ```text
+  Desktop/SoundGO Collection
+  ```
+  by default.
+- Some macOS versions may ask for permission to access:
+  - Desktop
+  - Downloads
+  - Music folders
+- If SoundGO is blocked by macOS Gatekeeper:
+  - Open:
+    ```text
+    System Settings → Privacy & Security
+    ```
+  - Click:
+    ```text
+    Open Anyway
+    ```
+
+---
+
+# Apple Silicon Support
+
+SoundGO works on:
+- Intel Macs
+- Apple Silicon Macs (M1/M2/M3)
+
+Recommended Python version:
+```text
+Python 3.10+
+```
+
 # Running SoundGO
 
 ## Python
